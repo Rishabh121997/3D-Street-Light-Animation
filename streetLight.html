@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Model Viewer</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      #c {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <script src="https://threejsfundamentals.org/threejs/resources/threejs/r105/three.min.js"></script>
+    <script src="https://threejsfundamentals.org/threejs/resources/threejs/r105/js/controls/OrbitControls.js"></script>
+    <script src="https://threejsfundamentals.org/threejs/resources/threejs/r105/js/loaders/GLTFLoader.js"></script>
+    <script src="https://threejsfundamentals.org/threejs/../3rdparty/dat.gui.min.js"></script>
+    <script>
+      "use strict";
+
+      /* global THREE, dat */
+
+      function main() {
+        const canvas = document.querySelector("#c");
+        const renderer = new THREE.WebGLRenderer({ canvas });
+
+        const fov = 45;
+        const aspect = 2;
+        const near = 0.1;
+        const far = 100;
+        const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+        camera.position.set(0, 10, 20);
+
+        const controls = new THREE.OrbitControls(camera, canvas);
+        controls.target.set(0, 5, 0);
+        controls.update();
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color("black");
+
+        let ambientLight;
+        let loadedObject;
+        let spotlight;
+
+        const gltfLoader = new THREE.GLTFLoader();
+        gltfLoader.load("./house/scene.gltf", (gltf) => {
+          const root = gltf.scene;
+
+          // Ensure the model has normals for lighting
+          root.traverse((child) => {
+            if (child.isMesh) {
+              child.material.flatShading = false;
+            }
+          });
+
+          loadedObject = root;
+          scene.add(loadedObject);
+
+          // Add ambient light for dim illumination
+          ambientLight = new THREE.AmbientLight(0x404040); // Dim white light
+          scene.add(ambientLight);
+
+          const box = new THREE.Box3().setFromObject(loadedObject);
+          const boxSize = box.getSize(new THREE.Vector3()).length();
+          const boxCenter = box.getCenter(new THREE.Vector3());
+
+          frameArea(boxSize * 0.5, boxSize, boxCenter, camera);
+
+          controls.maxDistance = boxSize * 10;
+          controls.target.copy(boxCenter);
+          controls.update();
+
+          // Find the object with the specified name
+          const objectWithName = findObjectByName(
+            root,
+            "polySurface1569_lambert44_0"
+          );
+          if (objectWithName) {
+            console.log("Object found:", objectWithName);
+            objectWithName.visible = true; // Ensure the object is visible
+
+            // Calculate the position for the spotlight above the object
+            const spotlightHeight = 9; // Adjust this value based on your scene
+            const box = new THREE.Box3().setFromObject(objectWithName);
+            const boxCenter = box.getCenter(new THREE.Vector3());
+            const spotlightPosition = boxCenter.clone();
+            spotlightPosition.y += spotlightHeight;
+
+            // Add a spotlight to the calculated position
+            spotlight = new THREE.SpotLight(0xffffff, 2);
+            spotlight.position.copy(spotlightPosition);
+            spotlight.castShadow = true;
+
+            // Set spotlight direction (pointing downward)
+            spotlight.target.position.copy(boxCenter);
+            spotlight.target.position.y -= spotlightHeight; // Adjust this value based on your scene
+
+            // Modify spotlight properties
+            spotlight.angle = THREE.Math.degToRad(30); // Angle of the spotlight
+            spotlight.penumbra = 0.2; // Softness of the spotlight edges
+            spotlight.distance = 200; // Maximum distance of the spotlight
+            spotlight.decay = 2; // Intensity decay over distance
+
+            scene.add(spotlight);
+            scene.add(spotlight.target);
+
+            // Setup GUI controls
+            setupGUI();
+          } else {
+            console.warn("Object not found with the specified name.");
+          }
+        });
+
+        function setupGUI() {
+          const gui = new dat.GUI();
+
+          // Spotlight controls
+          const spotlightFolder = gui.addFolder("Spotlight");
+          spotlightFolder.addColor(spotlight, "color").name("Color");
+          spotlightFolder.add(spotlight, "intensity", 0, 2).name("Intensity");
+          spotlightFolder.add(spotlight, "angle", 0, Math.PI / 2).name("Angle");
+          spotlightFolder.add(spotlight, "penumbra", 0, 1).name("Penumbra");
+          spotlightFolder.add(spotlight, "distance", 0, 500).name("Distance");
+          spotlightFolder.add(spotlight, "decay", 0, 2).name("Decay");
+
+          // Update functions to handle changes
+          spotlightFolder.open();
+        }
+
+        function frameArea(sizeToFitOnScreen, boxSize, boxCenter, camera) {
+          const halfSizeToFitOnScreen = sizeToFitOnScreen * 0.5;
+          const halfFovY = THREE.Math.degToRad(camera.fov * 0.5);
+          const distance = halfSizeToFitOnScreen / Math.tan(halfFovY);
+
+          const direction = new THREE.Vector3()
+            .subVectors(camera.position, boxCenter)
+            .multiply(new THREE.Vector3(1, 0, 1))
+            .normalize();
+
+          camera.position.copy(
+            direction.multiplyScalar(distance).add(boxCenter)
+          );
+
+          camera.near = boxSize / 100;
+          camera.far = boxSize * 100;
+
+          camera.updateProjectionMatrix();
+
+          camera.lookAt(boxCenter.x, boxCenter.y, boxCenter.z);
+        }
+
+        function resizeRendererToDisplaySize(renderer) {
+          const canvas = renderer.domElement;
+          const width = canvas.clientWidth;
+          const height = canvas.clientHeight;
+          const needResize = canvas.width !== width || canvas.height !== height;
+          if (needResize) {
+            renderer.setSize(width, height, false);
+          }
+          return needResize;
+        }
+
+        function findObjectByName(object, name, parentName = "") {
+          if (object.name === name) {
+            console.log("Found:", parentName + object.name);
+            return object;
+          } else {
+            for (const child of object.children) {
+              const foundObject = findObjectByName(
+                child,
+                name,
+                parentName + object.name + "/"
+              );
+              if (foundObject !== null) {
+                return foundObject;
+              }
+            }
+            return null;
+          }
+        }
+
+        function render() {
+          if (resizeRendererToDisplaySize(renderer)) {
+            const canvas = renderer.domElement;
+            camera.aspect = canvas.clientWidth / canvas.clientHeight;
+            camera.updateProjectionMatrix();
+          }
+          renderer.render(scene, camera);
+          requestAnimationFrame(render);
+        }
+
+        render();
+      }
+
+      main();
+    </script>
+  </body>
+</html>
